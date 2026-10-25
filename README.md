@@ -32,23 +32,9 @@ The device generates simulated marine instrument data, sends NMEA sentences over
 
 ## How the System Works
 
-```text
-                  Generator & Lector NMEA 0183
-                            ESP32-C3
-                               |
-              +----------------+----------------+
-              |                |                |
-           6 buttons       SH1106 OLED       UART1 serial
-              |             128 x 64           RX / TX
-              |                |                |
-      Mode and parameter   Live status       TTL interface
-          selection        and sentences         |
-                                           MAX490 module
-                                                 |
-                                          RS422 differential
-                                                 |
-                                       NMEA 0183 equipment
-```
+<p align="center">
+  <img src="Images/How the System Works.png" width="600">
+</p>
 
 The ESP32-C3 generates ASCII NMEA 0183-style sentences with checksums in simulator mode. It transmits them through **GPIO21 (TX)**. In reader mode, it receives serial data on **GPIO20 (RX)** and shows the latest received sentence on the OLED. A separate TX configuration screen changes the format used by the generator.
 
@@ -203,13 +189,9 @@ Repeated presses of **VEL**, **GPS**, or **PROF** cycle through their variants.
 
 The default RX and TX settings in the firmware are **4800 8N1**.
 
-```text
-4800 8N1
-│    ││└── 1 stop bit
-│    │└─── N = no parity
-│    └──── 8 data bits
-└───────── 4800 baud
-```
+<p align="center">
+  <img src="Images/4800 8N1.png" width="600">
+</p>
 
 A UART stop bit is a **logic-high (1)** interval. The `1` or `2` setting indicates the **number of stop-bit intervals**, not a selectable high/low value.
 
