@@ -21,7 +21,7 @@ The device generates simulated marine instrument data, sends NMEA sentences over
 1. Assemble the ESP32-C3, SH1106 OLED, six push buttons, and MAX490 interface using the pinout below.
 2. Install **ESP32 board support** in the Arduino IDE.
 3. Install **Adafruit GFX Library** and **Adafruit SH110X** via the Library Manager.
-4. Open `NMEA_Adafruit_SH110X_pin20_TX21_RX_TX_config_v3.ino` in the Arduino IDE.
+4. Open `Firmware_V0.1.ino` in the Arduino IDE.
 5. Select the appropriate **ESP32-C3** board and serial port.
 6. Compile and upload the firmware.
 7. Connect the RS422 interface to a compatible NMEA 0183 device, with matching serial settings.
@@ -174,7 +174,7 @@ Repeated presses of **VEL**, **GPS**, or **PROF** cycle through their variants.
 - Resumes simulator operation when you exit.
 
   <p align="center">
-  <img src="Conf tx.jpeg" width="400">
+  <img src="Images/Conf tx.jpeg" width="400">
 </p>
 
 ---
@@ -233,7 +233,6 @@ TX NMEA >BAUD
 4800  8N1
 UP/DN cambia
 GPS+VEL: salir
-Salida GPIO21
 ```
 
 The OLED is initialized through **I2C on GPIO8/GPIO9** with address `0x3C`.
@@ -276,7 +275,7 @@ Install the two Adafruit libraries through **Arduino IDE → Library Manager**.
 ## Installation
 
 1. Download or clone the repository containing the firmware.
-2. Open `NMEA_Adafruit_SH110X_pin20_TX21_RX_TX_config_v3.ino` with the Arduino IDE.
+2. Open `Firmware_V01.ino` with the Arduino IDE.
 3. Install the ESP32 board package and the two Adafruit libraries.
 4. Select an ESP32-C3 board and the correct upload port.
 5. Connect all hardware according to the wiring tables, checking voltage compatibility first.
