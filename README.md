@@ -8,12 +8,13 @@ The device generates simulated marine instrument data, sends NMEA sentences over
 
 ---
 
-<!-- Add your project photographs after uploading them to the repository.
+
 <p align="center">
   <img src="Images/Front.jpeg" width="300" alt="Front view">
-  <img src="Images/Reverse.jpeg" width="300" alt="Rear view">
+  <img src="Images/Right.jpeg" width="300" alt="Rear view">
+  <img src="Images/Left.jpeg" width="300" alt="Rear view">
 </p>
--->
+
 
 ## Quick Start
 
@@ -133,6 +134,10 @@ On the RS422 side, connect the module's appropriate differential **TX pair** and
 
 The default startup mode. Use the four mode buttons to select a simulated instrument/data category. The **UP** and **DOWN** buttons change the simulated numeric value. The device displays the selected data on the OLED and sends generated NMEA sentences through GPIO21.
 
+<p align="center">
+  <img src="Images/Modo tx.jpeg" width="400">
+</p>
+
 The current firmware contains the following sentence identifiers:
 
 | Selection | Generated identifier(s) |
@@ -155,6 +160,10 @@ Repeated presses of **VEL**, **GPS**, or **PROF** cycle through their variants.
 - Offers live configuration of reception baud rate, data bits, parity, and stop bits.
 - Echoes received characters to the debug serial output.
 
+  <p align="center">
+  <img src="Images/Conf Rx.jpeg" width="400">
+</p>
+
 ### 3. NMEA Output Configuration (TX)
 
 **Hold `GPS + VEL` for approximately 1 second** to enter or exit the TX setup screen.
@@ -163,6 +172,10 @@ Repeated presses of **VEL**, **GPS**, or **PROF** cycle through their variants.
 - Uses exactly the same parameter buttons as the reader menu.
 - Temporarily suspends normal sentence generation while this menu is displayed.
 - Resumes simulator operation when you exit.
+
+  <p align="center">
+  <img src="Conf tx.jpeg" width="400">
+</p>
 
 ---
 
