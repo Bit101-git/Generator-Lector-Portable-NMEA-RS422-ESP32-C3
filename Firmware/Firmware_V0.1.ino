@@ -1,6 +1,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
+
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
@@ -20,25 +21,26 @@ const int NMEA_RX_PIN = 20;
 const int NMEA_TX_PIN = 21;
 
 HardwareSerial NMEASerial(1);
+
 const uint32_t NMEA_BAUDS[] = {1200, 4800, 9600, 19200, 38400, 57600, 115200};
 const uint8_t NMEA_BAUD_COUNT = sizeof(NMEA_BAUDS) / sizeof(NMEA_BAUDS[0]);
-struct NMEASettings {
-  uint8_t baudIndex;
-  uint8_t dataBits;
-  uint8_t parity;    
-  uint8_t stopBits;   
-};
-NMEASettings nmeaRxSettings = {1, 8, 0, 1};
-NMEASettings nmeaTxSettings = {1, 8, 0, 1};
+uint8_t nmeaBaudIndex = 1;
 
-enum NMEAMode { NMEA_SIMULATOR, NMEA_READER, NMEA_TX_CONFIG };
-NMEAMode nmeaMode = NMEA_SIMULATOR;
-uint8_t nmeaConfigField = 0; 
+uint8_t nmeaDataBits = 8;
+uint8_t nmeaParity = 0;
+uint8_t nmeaStopBits = 1;
 
+uint8_t txBaudIndex = 1;
+uint8_t txDataBits = 8;
+uint8_t txParity = 0;
+uint8_t txStopBits = 1;
+uint8_t nmeaConfigField = 0;
+uint8_t txConfigField = 0;
+
+bool nmeaReadMode = false;
+bool nmeaTxConfigMode = false;
 unsigned long rxComboStart = 0, txComboStart = 0;
-bool rxComboArmed = false, txComboArmed = false;
-bool rxComboFired = false, txComboFired = false;
-const unsigned long COMBO_HOLD_MS = 1000;
+bool rxComboTriggered = false, txComboTriggered = false;
 
 String nmeaRxLine = "";
 String lastNMEALine = "Esperando NMEA...";
@@ -65,18 +67,26 @@ unsigned long pressStartDown = 0;
 bool holdingUp = false;
 bool holdingDown = false;
 
-uint32_t getNMEASerialConfig(const NMEASettings &settings);
-char getNMEAParityChar(const NMEASettings &settings);
+uint32_t getNMEASerialConfig();
+char getNMEAParityChar();
 void handleNMEAConfigButtons();
-void applyNMEASerialSettings(const NMEASettings &settings);
-void showNMEAScreen();
-void showNMEATXConfigScreen();
+void startNMEAReceiver();
+void stopNMEAReceiver();
+void restartNMEASerial();
 void readNMEA();
+void showNMEAScreen();
+void showNMEATxConfigScreen();
+void handleNMEATxConfigButtons();
+void applyActiveUART();
+uint32_t buildSerialConfig(uint8_t dataBits, uint8_t parity, uint8_t stopBits);
+char parityChar(uint8_t parity);
+void showModeNotice(const char *title);
 
 void setup() {
+
   Serial.begin(4800);
 
-  applyNMEASerialSettings(nmeaTxSettings);
+  NMEASerial.begin(NMEA_BAUDS[txBaudIndex], buildSerialConfig(txDataBits, txParity, txStopBits), NMEA_RX_PIN, NMEA_TX_PIN);
 
   Wire.begin(8, 9);
 
@@ -108,54 +118,53 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
 
-  bool tempPressed = digitalRead(btnTemp) == LOW;
-  bool profPressed = digitalRead(btnProf) == LOW;
-  bool gpsPressed = digitalRead(btnGPS) == LOW;
-  bool velPressed = digitalRead(btnVel) == LOW;
-  bool rxCombo = tempPressed && profPressed && !gpsPressed && !velPressed;
-  bool txCombo = gpsPressed && velPressed && !tempPressed && !profPressed;
+  const bool tempPressed = digitalRead(btnTemp) == LOW;
+  const bool profPressed = digitalRead(btnProf) == LOW;
+  const bool gpsPressed = digitalRead(btnGPS) == LOW;
+  const bool velPressed = digitalRead(btnVel) == LOW;
+  const bool rxCombo = tempPressed && profPressed && !gpsPressed && !velPressed;
+  const bool txCombo = gpsPressed && velPressed && !tempPressed && !profPressed;
 
   if (rxCombo) {
-    if (!rxComboArmed) { rxComboArmed = true; rxComboFired = false; rxComboStart = currentTime; }
-    if (!rxComboFired && currentTime - rxComboStart >= COMBO_HOLD_MS) {
-      rxComboFired = true;
-      nmeaMode = (nmeaMode == NMEA_READER) ? NMEA_SIMULATOR : NMEA_READER;
-      applyNMEASerialSettings(nmeaMode == NMEA_READER ? nmeaRxSettings : nmeaTxSettings);
-      nmeaRxLine = "";
-      lastNMEALine = "Esperando NMEA...";
-      nmeaConfigField = 0;
-      holdingUp = false; holdingDown = false;
-      display.clearDisplay(); display.setCursor(0, 18);
-      display.println(nmeaMode == NMEA_READER ? "LECTOR NMEA RX" : "SIMULADOR NMEA");
-      display.display();
+    if (!rxComboStart) { rxComboStart = currentTime; rxComboTriggered = false; }
+    if (!rxComboTriggered && currentTime - rxComboStart >= 1000) {
+      rxComboTriggered = true;
+      nmeaReadMode = !nmeaReadMode;
+      nmeaTxConfigMode = false;
+      applyActiveUART();
+      showModeNotice(nmeaReadMode ? "LECTOR NMEA ON" : "LECTOR NMEA OFF");
     }
-  } else { rxComboArmed = false; rxComboFired = false; }
+  } else { rxComboStart = 0; rxComboTriggered = false; }
 
   if (txCombo) {
-    if (!txComboArmed) { txComboArmed = true; txComboFired = false; txComboStart = currentTime; }
-    if (!txComboFired && currentTime - txComboStart >= COMBO_HOLD_MS) {
-      txComboFired = true;
-      nmeaMode = (nmeaMode == NMEA_TX_CONFIG) ? NMEA_SIMULATOR : NMEA_TX_CONFIG;
-      applyNMEASerialSettings(nmeaMode == NMEA_READER ? nmeaRxSettings : nmeaTxSettings);
-      nmeaConfigField = 0;
-      holdingUp = false; holdingDown = false;
-      display.clearDisplay(); display.setCursor(0, 18);
-      display.println(nmeaMode == NMEA_TX_CONFIG ? "CONFIG SALIDA TX" : "SIMULADOR NMEA");
-      display.display();
+    if (!txComboStart) { txComboStart = currentTime; txComboTriggered = false; }
+    if (!txComboTriggered && currentTime - txComboStart >= 1000) {
+      txComboTriggered = true;
+      nmeaTxConfigMode = !nmeaTxConfigMode;
+      nmeaReadMode = false;
+      applyActiveUART();
+      showModeNotice(nmeaTxConfigMode ? "CONFIG TX NMEA ON" : "CONFIG TX NMEA OFF");
     }
-  } else { txComboArmed = false; txComboFired = false; }
+  } else { txComboStart = 0; txComboTriggered = false; }
 
   if (rxCombo || txCombo) {
-    if (nmeaMode == NMEA_READER) { readNMEA(); showNMEAScreen(); }
-    else if (nmeaMode == NMEA_TX_CONFIG) showNMEATXConfigScreen();
+    if (nmeaReadMode) { readNMEA(); showNMEAScreen(); }
+    else if (nmeaTxConfigMode) showNMEATxConfigScreen();
     delay(10);
     return;
   }
 
-  if (nmeaMode != NMEA_SIMULATOR) {
+  if (nmeaReadMode) {
     handleNMEAConfigButtons();
-    if (nmeaMode == NMEA_READER) { readNMEA(); showNMEAScreen(); }
-    else showNMEATXConfigScreen();
+    readNMEA();
+    showNMEAScreen();
+    delay(10);
+    return;
+  }
+
+  if (nmeaTxConfigMode) {
+    handleNMEATxConfigButtons();
+    showNMEATxConfigScreen();
     delay(10);
     return;
   }
@@ -259,12 +268,11 @@ void loop() {
   else display.print("Nudos");
 
   String msg = generateNMEAMessage(mode, value, profMode, gpsMode, velMode);
-  NMEASerial.print(msg);  
-  Serial.print(msg);      
+  NMEASerial.print(msg);
+  Serial.print(msg);
   display.setCursor(0, 45);
   display.print(msg);
 
-  // Verificacion de checksum NMEA
   uint8_t msgBytes[100];
   msg.getBytes(msgBytes, sizeof(msgBytes));
   uint8_t len = strlen((char*)msgBytes);
@@ -280,102 +288,224 @@ void loop() {
   delay(200);
 }
 
-  static bool lastTemp = HIGH, lastVel = HIGH, lastGPS = HIGH, lastProf = HIGH;
-  static bool lastUp = HIGH, lastDown = HIGH;
-  bool temp = digitalRead(btnTemp), vel = digitalRead(btnVel);
-  bool gps = digitalRead(btnGPS), prof = digitalRead(btnProf);
-  bool up = digitalRead(btnUp), down = digitalRead(btnDown);
+void handleNMEAConfigButtons() {
+  static bool lastTempState = HIGH;
+  static bool lastVelState = HIGH;
+  static bool lastGPSState = HIGH;
+  static bool lastProfState = HIGH;
+  static bool lastCfgUpState = HIGH;
+  static bool lastCfgDownState = HIGH;
 
-  if (prof == LOW && lastProf == HIGH) nmeaConfigField = 0;
-  if (gps == LOW && lastGPS == HIGH) nmeaConfigField = 1;
-  if (vel == LOW && lastVel == HIGH) nmeaConfigField = 2;
-  if (temp == LOW && lastTemp == HIGH) nmeaConfigField = 3;
+  bool tempState = digitalRead(btnTemp);
+  bool velState = digitalRead(btnVel);
+  bool gpsState = digitalRead(btnGPS);
+  bool profState = digitalRead(btnProf);
+  bool upState = digitalRead(btnUp);
+  bool downState = digitalRead(btnDown);
 
-  NMEASettings &cfg = nmeaMode == NMEA_READER ? nmeaRxSettings : nmeaTxSettings;
-  bool inc = up == LOW && lastUp == HIGH;
-  bool dec = down == LOW && lastDown == HIGH;
-  if (inc != dec) {
+  if (profState == LOW && lastProfState == HIGH) nmeaConfigField = 0;
+  if (gpsState  == LOW && lastGPSState  == HIGH) nmeaConfigField = 1;
+  if (velState  == LOW && lastVelState  == HIGH) nmeaConfigField = 2;
+  if (tempState == LOW && lastTempState == HIGH) nmeaConfigField = 3;
+
+  bool changed = false;
+
+  if (upState == LOW && lastCfgUpState == HIGH) {
     switch (nmeaConfigField) {
-      case 0: cfg.baudIndex = (cfg.baudIndex + (inc ? 1 : NMEA_BAUD_COUNT-1)) % NMEA_BAUD_COUNT; break;
-      case 1: cfg.dataBits = cfg.dataBits == 8 ? 7 : 8; break;
-      case 2: cfg.parity = (cfg.parity + (inc ? 1 : 2)) % 3; break;
-      case 3: cfg.stopBits = cfg.stopBits == 1 ? 2 : 1; break;
+      case 0:
+        nmeaBaudIndex = (nmeaBaudIndex + 1) % NMEA_BAUD_COUNT;
+        break;
+      case 1:
+        nmeaDataBits = (nmeaDataBits == 8) ? 7 : 8;
+        break;
+      case 2:
+        nmeaParity = (nmeaParity + 1) % 3;
+        break;
+      case 3:
+        nmeaStopBits = (nmeaStopBits == 1) ? 2 : 1;
+        break;
     }
-    applyNMEASerialSettings(cfg);
+    changed = true;
   }
-  lastTemp=temp; lastVel=vel; lastGPS=gps; lastProf=prof;
-  lastUp=up; lastDown=down;
-}
 
-uint32_t getNMEASerialConfig(const NMEASettings &cfg) {
-  if (cfg.dataBits == 7) {
-    if (cfg.parity == 1) return cfg.stopBits == 2 ? SERIAL_7E2 : SERIAL_7E1;
-    if (cfg.parity == 2) return cfg.stopBits == 2 ? SERIAL_7O2 : SERIAL_7O1;
-    return cfg.stopBits == 2 ? SERIAL_7N2 : SERIAL_7N1;
+  if (downState == LOW && lastCfgDownState == HIGH) {
+    switch (nmeaConfigField) {
+      case 0:
+        if (nmeaBaudIndex > 0) nmeaBaudIndex--;
+        else nmeaBaudIndex = NMEA_BAUD_COUNT - 1;
+        break;
+      case 1:
+        nmeaDataBits = (nmeaDataBits == 8) ? 7 : 8;
+        break;
+      case 2:
+        if (nmeaParity == 0) nmeaParity = 2;
+        else nmeaParity--;
+        break;
+      case 3:
+        nmeaStopBits = (nmeaStopBits == 1) ? 2 : 1;
+        break;
+    }
+    changed = true;
   }
-  if (cfg.parity == 1) return cfg.stopBits == 2 ? SERIAL_8E2 : SERIAL_8E1;
-  if (cfg.parity == 2) return cfg.stopBits == 2 ? SERIAL_8O2 : SERIAL_8O1;
-  return cfg.stopBits == 2 ? SERIAL_8N2 : SERIAL_8N1;
+
+  if (changed) {
+    restartNMEASerial();
+    delay(180);
+  }
+
+  lastTempState = tempState;
+  lastVelState = velState;
+  lastGPSState = gpsState;
+  lastProfState = profState;
+  lastCfgUpState = upState;
+  lastCfgDownState = downState;
 }
 
-char getNMEAParityChar(const NMEASettings &cfg) {
-  return cfg.parity == 1 ? 'E' : (cfg.parity == 2 ? 'O' : 'N');
+uint32_t buildSerialConfig(uint8_t dataBits, uint8_t parity, uint8_t stopBits) {
+  if (dataBits == 7) {
+    if (parity == 1) return stopBits == 2 ? SERIAL_7E2 : SERIAL_7E1;
+    if (parity == 2) return stopBits == 2 ? SERIAL_7O2 : SERIAL_7O1;
+    return stopBits == 2 ? SERIAL_7N2 : SERIAL_7N1;
+  }
+  if (parity == 1) return stopBits == 2 ? SERIAL_8E2 : SERIAL_8E1;
+  if (parity == 2) return stopBits == 2 ? SERIAL_8O2 : SERIAL_8O1;
+  return stopBits == 2 ? SERIAL_8N2 : SERIAL_8N1;
 }
+uint32_t getNMEASerialConfig() {
+  return buildSerialConfig(nmeaDataBits, nmeaParity, nmeaStopBits);
+}
+char parityChar(uint8_t p) { return p == 1 ? 'E' : (p == 2 ? 'O' : 'N'); }
+char getNMEAParityChar() { return parityChar(nmeaParity); }
 
-void applyNMEASerialSettings(const NMEASettings &cfg) {
+void applyActiveUART() {
+  NMEASerial.flush();
   NMEASerial.end();
   delay(20);
-  NMEASerial.begin(NMEA_BAUDS[cfg.baudIndex], getNMEASerialConfig(cfg), NMEA_RX_PIN, NMEA_TX_PIN);
-  Serial.print("UART NMEA: ");
-  Serial.print(NMEA_BAUDS[cfg.baudIndex]);
-  Serial.print(' '); Serial.print(cfg.dataBits);
-  Serial.print(getNMEAParityChar(cfg)); Serial.println(cfg.stopBits);
+  if (nmeaReadMode) {
+    NMEASerial.begin(NMEA_BAUDS[nmeaBaudIndex], getNMEASerialConfig(), NMEA_RX_PIN, NMEA_TX_PIN);
+  } else {
+    NMEASerial.begin(NMEA_BAUDS[txBaudIndex], buildSerialConfig(txDataBits, txParity, txStopBits), NMEA_RX_PIN, NMEA_TX_PIN);
+  }
   nmeaRxLine = "";
+  lastNMEALine = "Esperando NMEA...";
+}
+void startNMEAReceiver() { applyActiveUART(); }
+void stopNMEAReceiver() { nmeaRxLine = ""; applyActiveUART(); }
+void restartNMEASerial() { applyActiveUART(); }
+
+void showModeNotice(const char *title) {
+  display.clearDisplay();
+  display.setCursor(0, 12);
+  display.println(title);
+  display.setCursor(0, 29);
+  if (nmeaReadMode) {
+    display.print(NMEA_BAUDS[nmeaBaudIndex]); display.print(' ');
+    display.print(nmeaDataBits); display.print(parityChar(nmeaParity)); display.print(nmeaStopBits);
+  } else {
+    display.print(NMEA_BAUDS[txBaudIndex]); display.print(' ');
+    display.print(txDataBits); display.print(parityChar(txParity)); display.print(txStopBits);
+  }
+  display.display();
+  delay(350);
+}
+
+void handleNMEATxConfigButtons() {
+  static bool previous[6] = {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH};
+  const bool current[6] = {
+    (bool)digitalRead(btnProf), (bool)digitalRead(btnGPS),
+    (bool)digitalRead(btnVel), (bool)digitalRead(btnTemp),
+    (bool)digitalRead(btnUp), (bool)digitalRead(btnDown)
+  };
+  for (int i=0; i<4; ++i) {
+    if (current[i] == LOW && previous[i] == HIGH) txConfigField = i;
+  }
+  int direction = 0;
+  if (current[4] == LOW && previous[4] == HIGH) direction = 1;
+  if (current[5] == LOW && previous[5] == HIGH) direction = -1;
+  if (direction) {
+    switch (txConfigField) {
+      case 0: txBaudIndex = (txBaudIndex + NMEA_BAUD_COUNT + direction) % NMEA_BAUD_COUNT; break;
+      case 1: txDataBits = txDataBits == 8 ? 7 : 8; break;
+      case 2: txParity = (txParity + 3 + direction) % 3; break;
+      case 3: txStopBits = txStopBits == 1 ? 2 : 1; break;
+    }
+    applyActiveUART();
+  }
+  for (int i=0; i<6; ++i) previous[i] = current[i];
+}
+
+void showNMEATxConfigScreen() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("TX NMEA >");
+  const char *names[] = {"BAUD", "DATA", "PARITY", "STOP"};
+  display.println(names[txConfigField]);
+  display.setCursor(0, 14);
+  display.print(NMEA_BAUDS[txBaudIndex]); display.print("  ");
+  display.print(txDataBits); display.print(parityChar(txParity)); display.println(txStopBits);
+  display.setCursor(0, 28);
+  display.println("PROF GPS VEL TEMP");
+  display.setCursor(0, 40);
+  display.println("UP/DN cambia");
+  display.setCursor(0, 52);
+  display.println("GPS+VEL: salir");
+  display.display();
 }
 
 void readNMEA() {
   while (NMEASerial.available()) {
     char c = (char)NMEASerial.read();
+
     Serial.write(c);
+
     if (c == '\n') {
       nmeaRxLine.trim();
-      if (nmeaRxLine.length()) lastNMEALine = nmeaRxLine;
+      if (nmeaRxLine.length() > 0) {
+        lastNMEALine = nmeaRxLine;
+      }
       nmeaRxLine = "";
-    } else if (c != '\r') {
-      if (nmeaRxLine.length() < 120) nmeaRxLine += c;
-      else nmeaRxLine = "";
+    }
+    else if (c != '\r') {
+
+      if (nmeaRxLine.length() < 120) {
+        nmeaRxLine += c;
+      } else {
+        nmeaRxLine = "";
+      }
     }
   }
 }
 
-void showNMEAConfigHeader(const NMEASettings &cfg, const char *prefix) {
+void showNMEAScreen() {
   display.clearDisplay();
+
   display.setCursor(0, 0);
-  display.print(prefix);
-  display.print(" >");
+  display.print("RX NMEA >");
   if (nmeaConfigField == 0) display.println("BAUD");
   else if (nmeaConfigField == 1) display.println("DATA");
   else if (nmeaConfigField == 2) display.println("PARITY");
   else display.println("STOP");
+
   display.setCursor(0, 13);
-  display.print(NMEA_BAUDS[cfg.baudIndex]); display.print("  ");
-  display.print(cfg.dataBits); display.print(getNMEAParityChar(cfg));
-  display.println(cfg.stopBits);
-  display.setCursor(0, 26); display.println("UP/DN cambia");
-}
+  display.print(NMEA_BAUDS[nmeaBaudIndex]);
+  display.print("  " );
+  display.print(nmeaDataBits);
+  display.print(getNMEAParityChar());
+  display.print(nmeaStopBits);
 
-void showNMEAScreen() {
-  showNMEAConfigHeader(nmeaRxSettings, "RX NMEA");
-  display.setCursor(0, 39); display.println("Dato:");
+  display.setCursor(0, 26);
+  display.print("UP/DN cambia");
+
+  display.setCursor(0, 39);
+  display.print("Dato:");
+
   display.setCursor(0, 52);
-  display.print(lastNMEALine.substring(0, 21));
-  display.display();
-}
+  if (lastNMEALine.length() > 21) {
+    display.print(lastNMEALine.substring(0, 21));
+  } else {
+    display.print(lastNMEALine);
+  }
 
-void showNMEATXConfigScreen() {
-  showNMEAConfigHeader(nmeaTxSettings, "TX NMEA");
-  display.setCursor(0, 39); display.println("GPS+VEL: salir");
-  display.setCursor(0, 52); display.println("Salida GPIO21");
   display.display();
 }
 
